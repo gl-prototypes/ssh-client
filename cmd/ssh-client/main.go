@@ -3,7 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"log"
 	"net"
 	"os"
 	"os/user"
@@ -74,8 +76,8 @@ func main() {
 	}
 	defer session.Close()
 
-	session.Stdout = os.Stdout
-	session.Stderr = os.Stderr
+	//session.Stdout = os.Stdout
+	//session.Stderr = os.Stderr
 
 	cmd := flag.Args()[1:]
 	if len(cmd) > 2 && cmd[0] == "--" {
@@ -112,6 +114,46 @@ func main() {
 		if err := session.Shell(); err != nil {
 			panic(err)
 		}
+	}
+
+	forward := os.Getenv("SSH_REMOTE_FORWARD") // example: localhost:9000->localhost:3000
+	parts := strings.Split(forward, "->")
+	if len(parts) == 2 {
+		listenAddr, err := net.ResolveTCPAddr("tcp", parts[0])
+		if err != nil {
+			panic(err)
+		}
+		l, err := client.ListenTCP(listenAddr)
+		if err != nil {
+			panic(err)
+		}
+		go func() {
+			for {
+				ch, err := l.Accept()
+				if err != nil {
+					panic(err)
+				}
+				go func() {
+					c, err := net.Dial("tcp", parts[1])
+					if err != nil {
+						log.Println(err)
+						ch.Close()
+						return
+					}
+					go func() {
+						defer ch.Close()
+						defer c.Close()
+						io.Copy(ch, c)
+					}()
+					go func() {
+						defer ch.Close()
+						defer c.Close()
+						io.Copy(c, ch)
+					}()
+				}()
+			}
+
+		}()
 	}
 
 	if err := session.Wait(); err != nil {
